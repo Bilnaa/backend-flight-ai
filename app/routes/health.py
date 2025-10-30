@@ -32,8 +32,7 @@ async def health_check(db: Session = Depends(get_db)):  # noqa: B008
             "status": "healthy" if ray_status == "healthy" and db_status == "healthy" else "degraded",
             "ray_status": ray_status,
             "database": {"status": db_status, "airlines_count": airlines_count, "airports_count": airports_count},
-            "endpoints": ["/fit", "/predict", "/health", "/airlines", "/airports"],
-            "note": "Données lues depuis la base de données PostgreSQL",
+            "endpoints": ["/fit", "/predict", "/health", "/airlines", "/airports"]
         }
 
     except Exception as e:
