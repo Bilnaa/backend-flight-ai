@@ -15,6 +15,32 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - app-network
+
+  ray:
+    build:
+      context: .
+      dockerfile: Dockerfile.ray
+    container_name: flightray
+    shm_size: "2gb"
+    environment:
+      MODEL_PATH: models/modele.pkl
+    ports:
+      - "8265:8265"  # Ray Dashboard
+      - "6379:6379"  # Ray Redis/GCS
+      - "10001:10001"  # Ray Client API (port de connexion principal)
+    volumes:
+      - ./models:/app/models
+    command: bash -c "ray start --head --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265 --object-store-memory=1000000000 --include-dashboard=true && sleep 3 && ray status && tail -f /dev/null"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8265 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - app-network
 
   api:
     build: .
@@ -22,9 +48,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      ray:
+        condition: service_healthy
     shm_size: "1gb"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/flightdb
+      RAY_ADDRESS: ray://ray:10001
       PORT: 8000
       HOST: 0.0.0.0
       ENV: production
@@ -33,7 +62,14 @@ services:
     volumes:
       - ./app:/app/app
       - ./uploads:/app/uploads
+      - ./models:/app/models
+    networks:
+      - app-network
     command: /bin/bash -c ". .venv/bin/activate && python scripts/setup_database.py && python main.py"
 
 volumes:
   postgres_data:
+
+networks:
+  app-network:
+    driver: bridge

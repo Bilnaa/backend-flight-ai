@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Ray
     RAY_ADDRESS: str = os.getenv("RAY_ADDRESS", "auto")
 
+    # Modèle ML
+    MODEL_PATH: str = os.getenv("MODEL_PATH", "models/modele.pkl")
+
     # API
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: str = os.getenv("API_PORT", "8000")

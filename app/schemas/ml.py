@@ -34,5 +34,6 @@ class PredictResponse(BaseModel):
     dest_airport: str
     predicted_delay: float
     model_version: str
+    using_model: bool  # True si le modèle ML est utilisé, False si fallback
 
 

@@ -29,17 +29,25 @@ import ray
 
 # Initialiser Ray si ce n'est pas déjà fait
 if not ray.is_initialized():
-    ray_address = os.getenv("RAY_ADDRESS")
-    # Traiter "auto" ou vide comme absence d'adresse explicite
+    ray_address = os.getenv("RAY_ADDRESS", "auto")
+    # Traiter "auto" ou vide comme mode local
     if ray_address and ray_address.strip().lower() not in ("", "auto"):
         try:
-            # Tente de se connecter à un cluster Ray existant
-            ray.init(address=ray_address, ignore_reinit_error=True, runtime_env={"pip": ["numpy", "scikit-learn"]})
-        except Exception:
-            pass
-    # Si non initialisé, bascule en mode local
-    if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True, runtime_env={"pip": ["numpy", "scikit-learn"]})
+            # Tente de se connecter à un cluster Ray existant (ex: ray://ray:10001)
+            print(f"Tentative de connexion au cluster Ray à l'adresse: {ray_address}")
+            ray.init(address=ray_address, ignore_reinit_error=True)
+            print(f"Connecté au cluster Ray: {ray_address}")
+        except Exception as e:
+            print(f"Échec de la connexion au cluster Ray: {e}")
+            # Si la connexion échoue, bascule en mode local
+            if not ray.is_initialized():
+                print("Bascule en mode Ray local")
+                ray.init(ignore_reinit_error=True)
+    else:
+        # Mode local si RAY_ADDRESS n'est pas défini ou est "auto"
+        if not ray.is_initialized():
+            print("Démarrage de Ray en mode local")
+            ray.init(ignore_reinit_error=True)
 
 
 @ray.remote
@@ -51,9 +59,10 @@ class ModelPredictor:
     Ici, le modèle est chargé une fois et réutilisé pour toutes les prédictions.
     """
 
-    def __init__(self, model_path: str = "models/trained_model.pkl"):
+    def __init__(self, model_path: Optional[str] = None):
         """Initialiser le modèle - chargé une seule fois au démarrage"""
-        self.model_path = model_path
+        # Utiliser os.getenv() directement car on ne peut pas importer app.config dans le conteneur Ray
+        self.model_path = model_path or os.getenv("MODEL_PATH", "models/modele.pkl")
         self.model = None
         self.model_loaded = False
         self._load_model()
@@ -61,17 +70,44 @@ class ModelPredictor:
     def _load_model(self):
         """Charger le modèle pré-entraîné depuis le disque"""
         try:
-            if os.path.exists(self.model_path):
-                with open(self.model_path, "rb") as f:
+            # Afficher des informations de débogage
+            abs_path = os.path.abspath(self.model_path)
+            current_dir = os.getcwd()
+            print("[ModelPredictor] Tentative de chargement du modèle:")
+            print(f"  Chemin relatif: {self.model_path}")
+            print(f"  Chemin absolu: {abs_path}")
+            print(f"  Répertoire courant: {current_dir}")
+            print(f"  Le fichier existe: {os.path.exists(self.model_path)}")
+
+            # Essayer aussi avec le chemin absolu
+            paths_to_try = [self.model_path, abs_path]
+            if not os.path.isabs(self.model_path):
+                # Essayer aussi avec /app/models/ si on est dans un conteneur
+                container_path = f"/app/{self.model_path}"
+                paths_to_try.append(container_path)
+
+            model_file = None
+            for path in paths_to_try:
+                if os.path.exists(path):
+                    model_file = path
+                    break
+
+            if model_file:
+                print(f"[ModelPredictor] Chargement du modèle depuis: {model_file}")
+                with open(model_file, "rb") as f:
                     self.model = pickle.load(f)
                 self.model_loaded = True
-                print(f"Modèle chargé depuis {self.model_path}")
+                print(f"[ModelPredictor] ✓ Modèle chargé avec succès depuis {model_file}")
             else:
-                print(f"Modèle non trouvé à {self.model_path}")
-                print(f"   Placez le modèle entraîné dans: {os.path.abspath(self.model_path)}")
+                print("[ModelPredictor] ✗ Modèle non trouvé. Chemins testés:")
+                for path in paths_to_try:
+                    print(f"  - {path} (existe: {os.path.exists(path)})")
+                print("  Placez le modèle entraîné dans l'un de ces emplacements")
                 self.model_loaded = False
         except (FileNotFoundError, pickle.UnpicklingError, OSError) as e:
-            print(f"Erreur lors du chargement du modèle: {e}")
+            print(f"[ModelPredictor] ✗ Erreur lors du chargement du modèle: {e}")
+            import traceback
+            traceback.print_exc()
             self.model_loaded = False
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> str:
@@ -110,7 +146,7 @@ class ModelPredictor:
         origin_airport: Optional[str] = None,
         dest_airport: Optional[str] = None,
         additional_features: Optional[Dict] = None,
-    ) -> float:
+    ) -> tuple[float, bool]:
         """
         Faire une prédiction avec le modèle pré-entraîné
 
@@ -119,7 +155,7 @@ class ModelPredictor:
             additional_features: Features additionnelles optionnelles (non utilisé pour l'instant)
 
         Returns:
-            Valeur prédite du retard
+            Tuple (valeur prédite du retard, using_model: True si modèle utilisé, False si fallback)
         """
         # Ignorer additional_features pour l'instant (pourra être utilisé plus tard)
         del additional_features  # Supprimer l'avertissement de paramètre non utilisé
@@ -143,7 +179,7 @@ class ModelPredictor:
                 X = np.array([[month, safe_day, oa, da]])
 
             prediction = self.model.predict(X)[0]
-            return float(prediction)
+            return (float(prediction), True)  # Modèle utilisé
         else:
             # Fallback vers logique basique si modèle non disponible
             base_delays = {
@@ -177,7 +213,7 @@ class ModelPredictor:
             dest_adj = 2.0 if dest_airport and dest_airport.upper() in busy_hubs else 0.5 if dest_airport else 0.0
 
             estimate = base + day_adj + origin_adj + dest_adj
-            return float(max(0.0, estimate))
+            return (float(max(0.0, estimate)), False)  # Fallback utilisé
 
 
 class RayModelService:
@@ -190,13 +226,23 @@ class RayModelService:
     - Gère le chargement et le rechargement du modèle
     """
 
-    def __init__(self, model_path: str = "models/trained_model.pkl"):
+    def __init__(self, model_path: Optional[str] = None):
         """Initialiser le service Ray avec le modèle pré-entraîné"""
+        # Importer settings ici (pas au niveau du module) car on est dans le conteneur API
+        # L'acteur ModelPredictor ne peut pas importer app.config car il s'exécute dans Ray
+        try:
+            from app.config import settings
+            default_path = settings.MODEL_PATH
+        except ImportError:
+            # Fallback si settings n'est pas disponible
+            default_path = os.getenv("MODEL_PATH", "models/modele.pkl")
+
+        # Utiliser le chemin depuis les settings si non fourni
+        self.model_path = model_path or default_path
         # Créer un acteur Ray qui maintient le modèle en mémoire
         # L'acteur est créé une seule fois et réutilisé pour toutes les prédictions
         # .remote() est ajouté dynamiquement par le décorateur @ray.remote
-        self.predictor = ModelPredictor.remote(model_path)  # type: ignore[attr-defined]
-        self.model_path = model_path
+        self.predictor = ModelPredictor.remote(self.model_path)  # type: ignore[attr-defined]
 
     async def fit(self, X: np.ndarray, y: np.ndarray) -> str:
         """
@@ -220,7 +266,7 @@ class RayModelService:
         origin_airport: Optional[str] = None,
         dest_airport: Optional[str] = None,
         additional_data: Optional[Dict] = None,
-    ) -> float:
+    ) -> tuple[float, bool]:
         """
         Faire une prédiction en utilisant Ray
 
@@ -237,11 +283,11 @@ class RayModelService:
             additional_data: Données additionnelles
 
         Returns:
-            Valeur prédite
+            Tuple (valeur prédite, using_model: True si modèle utilisé, False si fallback)
         """
         # Utiliser Ray pour la prédiction distribuée
         # .remote() envoie la tâche à l'acteur, ray.get() récupère le résultat
-        prediction = ray.get(
+        prediction, using_model = ray.get(
             self.predictor.predict.remote(
                 month,
                 day,
@@ -251,7 +297,7 @@ class RayModelService:
             )
         )
 
-        return prediction
+        return (prediction, using_model)
 
     def shutdown(self):
         """Arrêter Ray proprement"""

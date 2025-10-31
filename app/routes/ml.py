@@ -73,7 +73,7 @@ async def predict(request: PredictRequest):
 
         # Prédiction avec Ray
         ray_service = get_ray_service()
-        predicted_delay = await ray_service.predict(
+        predicted_delay, using_model = await ray_service.predict(
             month=request.month,
             day=request.day,
             origin_airport=request.origin_airport,
@@ -87,6 +87,7 @@ async def predict(request: PredictRequest):
             dest_airport=request.dest_airport,
             predicted_delay=predicted_delay,
             model_version="v1.0",
+            using_model=using_model,
         )
 
     except Exception as e:

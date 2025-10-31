@@ -1,0 +1,26 @@
+# Dockerfile pour le service Ray
+FROM rayproject/ray:2.51.0-py311
+
+WORKDIR /app
+
+# Passer en root pour les installations système
+USER root
+
+# Installer curl pour le healthcheck
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# Installer les dépendances Python nécessaires pour le modèle
+RUN pip install --no-cache-dir \
+    numpy==2.3.4 \
+    scikit-learn==1.7.2 \
+    pandas==2.3.3 \
+    category-encoders>=2.6.0
+
+# Créer le répertoire pour les modèles
+RUN mkdir -p /app/models
+
+# Exposer les ports Ray (dashboard: 8265, Redis: 6379, Client API: 10001)
+EXPOSE 8265 6379 10001
+
+# La commande de démarrage sera définie dans docker-compose.yml
+
