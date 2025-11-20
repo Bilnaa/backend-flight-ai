@@ -37,3 +37,21 @@ class PredictResponse(BaseModel):
     using_model: bool  # True si le modèle ML est utilisé, False si fallback
 
 
+class PredictBookingRequest(BaseModel):
+    """Requête pour la prédiction au moment de la réservation (nouveau modèle)"""
+
+    AIRLINE: str
+    ORIGIN_AIRPORT: str
+    DESTINATION_AIRPORT: str
+    MONTH: int
+    DAY_OF_WEEK: int
+    SCHEDULED_DEPARTURE: int
+    DISTANCE: int
+
+
+class PredictBookingResponse(BaseModel):
+    """Réponse de prédiction au moment de la réservation"""
+
+    predicted_delay: float
+    model_version: str = "v2.0"
+    using_model: bool = True

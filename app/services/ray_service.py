@@ -25,6 +25,7 @@ import pickle
 from typing import Dict, Optional
 
 import numpy as np
+import pandas as pd
 import ray
 
 # Initialiser Ray si ce n'est pas déjà fait
@@ -42,6 +43,9 @@ if not ray.is_initialized():
             # Si la connexion échoue, bascule en mode local
             if not ray.is_initialized():
                 print("Bascule en mode Ray local")
+                # S'assurer qu'on n'essaie pas de se reconnecter au cluster via la variable d'environnement
+                if "RAY_ADDRESS" in os.environ:
+                    del os.environ["RAY_ADDRESS"]
                 ray.init(ignore_reinit_error=True)
     else:
         # Mode local si RAY_ADDRESS n'est pas défini ou est "auto"
@@ -70,6 +74,14 @@ class ModelPredictor:
     def _load_model(self):
         """Charger le modèle pré-entraîné depuis le disque"""
         try:
+            # Importer les dépendances communes avant de charger le modèle pickle
+            # Cela évite les erreurs "ModuleNotFoundError" lors du pickle.load()
+            try:
+                import category_encoders  # noqa: F401
+                print("[ModelPredictor] ✓ category_encoders disponible")
+            except ImportError:
+                print("[ModelPredictor] ⚠ category_encoders non disponible (peut causer des erreurs)")
+
             # Afficher des informations de débogage
             abs_path = os.path.abspath(self.model_path)
             current_dir = os.getcwd()
@@ -104,7 +116,7 @@ class ModelPredictor:
                     print(f"  - {path} (existe: {os.path.exists(path)})")
                 print("  Placez le modèle entraîné dans l'un de ces emplacements")
                 self.model_loaded = False
-        except (FileNotFoundError, pickle.UnpicklingError, OSError) as e:
+        except (FileNotFoundError, pickle.UnpicklingError, OSError, ModuleNotFoundError) as e:
             print(f"[ModelPredictor] ✗ Erreur lors du chargement du modèle: {e}")
             import traceback
             traceback.print_exc()
@@ -161,25 +173,42 @@ class ModelPredictor:
         del additional_features  # Supprimer l'avertissement de paramètre non utilisé
 
         if self.model_loaded and self.model is not None:
-            # Utiliser le modèle pré-entraîné. Si le modèle n'attend qu'une feature,
-            # on n'utilise que le mois pour rester compatible avec l'entraînement actuel.
+            # Le modèle attend un DataFrame pandas avec des colonnes spécifiques
+            # Colonnes attendues :
+            # - Numériques : MONTH, DAY, DAY_OF_WEEK, SCHEDULED_DEPARTURE, DEPARTURE_DELAY, SCHEDULED_ARRIVAL, DISTANCE
+            # - Catégorielles : ORIGIN_AIRPORT, DESTINATION_AIRPORT, AIRLINE
             try:
-                n_features = getattr(self.model, "n_features_in_", 1)
-            except Exception:
-                n_features = 1
+                # Créer un DataFrame avec les valeurs fournies et des valeurs par défaut pour les autres colonnes
+                safe_day = day if day is not None else 15
+                safe_origin = origin_airport if origin_airport else "UNKNOWN"
+                safe_dest = dest_airport if dest_airport else "UNKNOWN"
 
-            if n_features == 1:
-                X = np.array([[month]])
-            else:
-                # Tentative de vectorisation simple si le modèle accepte plus de features
-                safe_day = (day if day is not None else 15)
-                # Encodage déterministe très simple pour les aéroports (hash mod 10)
-                oa = (abs(hash(origin_airport)) % 10) if origin_airport else 0
-                da = (abs(hash(dest_airport)) % 10) if dest_airport else 0
-                X = np.array([[month, safe_day, oa, da]])
+                # Calculer DAY_OF_WEEK (simplifié : 1 = lundi, 7 = dimanche)
+                # Utiliser une valeur par défaut si non disponible
+                day_of_week = 1  # Par défaut lundi
 
-            prediction = self.model.predict(X)[0]
-            return (float(prediction), True)  # Modèle utilisé
+                # Valeurs par défaut pour les colonnes non fournies
+                X_df = pd.DataFrame({
+                    "MONTH": [month],
+                    "DAY": [safe_day],
+                    "DAY_OF_WEEK": [day_of_week],
+                    "SCHEDULED_DEPARTURE": [800],  # Valeur par défaut (8h00)
+                    "DEPARTURE_DELAY": [0],  # Pas de retard initial
+                    "SCHEDULED_ARRIVAL": [1200],  # Valeur par défaut (12h00)
+                    "DISTANCE": [500],  # Distance par défaut en miles
+                    "ORIGIN_AIRPORT": [safe_origin],
+                    "DESTINATION_AIRPORT": [safe_dest],
+                    "AIRLINE": ["UNKNOWN"],  # Valeur par défaut
+                })
+
+                prediction = self.model.predict(X_df)[0]
+                return (float(prediction), True)  # Modèle utilisé
+            except Exception as e:
+                print(f"[ModelPredictor] Erreur lors de la prédiction avec le modèle: {e}")
+                import traceback
+                traceback.print_exc()
+                # En cas d'erreur, utiliser le fallback
+                self.model_loaded = False
         else:
             # Fallback vers logique basique si modèle non disponible
             base_delays = {
