@@ -8,6 +8,8 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 
 from app.schemas.ml import (
+    ExplainRequest,
+    ExplainResponse,
     FitRequest,
     FitResponse,
     PredictBookingRequest,
@@ -186,3 +188,54 @@ async def predict_booking(request: PredictBookingRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la prédiction booking: {str(e)}") from e
+
+
+@router.post("/explain", response_model=ExplainResponse)
+async def explain_prediction(request: ExplainRequest):
+    """
+    Génère un graphique SHAP expliquant la prédiction pour une réservation donnée
+
+    Utilise le modèle Random Forest et SHAP pour visualiser l'impact de chaque feature
+    sur la prédiction du retard
+    """
+    try:
+        # Validation basique
+        if not (1 <= request.MONTH <= 12):
+            raise HTTPException(status_code=400, detail="Le mois doit être entre 1 et 12")
+        if not (1 <= request.DAY_OF_WEEK <= 7):
+            raise HTTPException(status_code=400, detail="Le jour de la semaine doit être entre 1 et 7")
+        if not (0 <= request.SCHEDULED_DEPARTURE <= 2359):
+            raise HTTPException(status_code=400, detail="L'heure de départ doit être entre 0000 et 2359")
+        if not request.AIRLINE or not request.ORIGIN_AIRPORT or not request.DESTINATION_AIRPORT:
+            raise HTTPException(status_code=400, detail="La compagnie et les aéroports sont requis")
+
+        # Obtenir le service
+        service = get_booking_model_service()
+
+        # Préparer les données pour le modèle
+        booking_data = {
+            "AIRLINE": request.AIRLINE,
+            "ORIGIN_AIRPORT": request.ORIGIN_AIRPORT,
+            "DESTINATION_AIRPORT": request.DESTINATION_AIRPORT,
+            "MONTH": request.MONTH,
+            "DAY_OF_WEEK": request.DAY_OF_WEEK,
+            "SCHEDULED_DEPARTURE": request.SCHEDULED_DEPARTURE,
+            "DISTANCE": request.DISTANCE,
+        }
+
+        # Générer l'explication SHAP
+        image_base64 = service.explain_prediction(booking_data)
+
+        return ExplainResponse(
+            image_base64=image_base64,
+            model_version="v3.0",
+        )
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=503,
+            detail="Le modèle de prédiction n'est pas disponible. "
+            "Veuillez l'entraîner d'abord via l'endpoint /fit-booking-model.",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de l'explication: {str(e)}") from e

@@ -55,3 +55,22 @@ class PredictBookingResponse(BaseModel):
     predicted_delay: float
     model_version: str = "v2.0"
     using_model: bool = True
+
+
+class ExplainRequest(BaseModel):
+    """Requête pour l'explication d'une prédiction (SHAP)"""
+
+    AIRLINE: str
+    ORIGIN_AIRPORT: str
+    DESTINATION_AIRPORT: str
+    MONTH: int
+    DAY_OF_WEEK: int
+    SCHEDULED_DEPARTURE: int
+    DISTANCE: int
+
+
+class ExplainResponse(BaseModel):
+    """Réponse d'explication avec le graphique SHAP"""
+
+    image_base64: str
+    model_version: str = "v3.0"

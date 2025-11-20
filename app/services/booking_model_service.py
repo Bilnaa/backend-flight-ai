@@ -10,11 +10,18 @@ Ce service gère :
 import os
 import pickle
 from typing import Any, Dict
+import io
+import base64
 
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+import shap
+import matplotlib.pyplot as plt
+import matplotlib
+
+matplotlib.use("Agg")  # Use non-GUI backend
 
 
 class BookingModelService:
@@ -35,6 +42,7 @@ class BookingModelService:
         self._encoders = None
         self._feature_names = None
         self._stats = None
+        self._explainer = None
 
         self._load_model_and_stats()
 
@@ -54,6 +62,9 @@ class BookingModelService:
 
         with open(self.stats_path, "rb") as f:
             self._stats = pickle.load(f)
+
+        # Initialize SHAP explainer
+        self._explainer = shap.TreeExplainer(self._model)
 
     def predict(self, booking_data: Dict[str, Any]) -> float:
         """
@@ -259,3 +270,62 @@ class BookingModelService:
             df["IS_LONG"] = (df["DISTANCE"] > 2000).astype(int)
 
         return df
+
+    def explain_prediction(self, booking_data: Dict[str, Any]) -> str:
+        """
+        Generate a SHAP waterfall plot explaining the prediction for a given booking.
+
+        Args:
+            booking_data: Dictionary containing the booking information.
+
+        Returns:
+            Base64-encoded PNG image of the SHAP waterfall plot.
+        """
+        if self._model is None or self._explainer is None:
+            self._load_model_and_stats()
+
+        # Prepare the data exactly as we do for prediction
+        df = pd.DataFrame([booking_data])
+        df = self._merge_historical_stats(df)
+        df = self._apply_feature_engineering(df)
+
+        # Encode categorical features
+        for col, encoder in self._encoders.items():
+            if col in df.columns:
+                known_values = encoder.classes_
+                df[col] = df[col].apply(lambda x: x if x in known_values else "unknown")
+                df[col] = encoder.transform(df[col])
+
+        # Ensure all feature columns are present
+        for col in self._feature_names:
+            if col not in df.columns:
+                df[col] = 0
+
+        # Reorder columns to match training
+        df = df[self._feature_names]
+
+        # Calculate SHAP values
+        shap_values = self._explainer.shap_values(df)
+
+        # Create waterfall plot
+        fig, ax = plt.subplots(figsize=(10, 8))
+        shap.waterfall_plot(
+            shap.Explanation(
+                values=shap_values[0],
+                base_values=self._explainer.expected_value,
+                data=df.iloc[0].values,
+                feature_names=self._feature_names,
+            ),
+            show=False,
+        )
+        plt.title("SHAP Explanation - Feature Impact on Delay Prediction", fontsize=14, fontweight="bold")
+        plt.tight_layout()
+
+        # Convert plot to base64 PNG
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format="png", dpi=100, bbox_inches="tight")
+        buffer.seek(0)
+        img_base64 = base64.b64encode(buffer.read()).decode("utf-8")
+        plt.close(fig)
+
+        return img_base64
