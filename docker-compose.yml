@@ -23,7 +23,7 @@ services:
       context: .
       dockerfile: Dockerfile.ray
     container_name: flightray
-    shm_size: "2gb"
+    shm_size: "1gb"
     environment:
       MODEL_PATH: models/modele.pkl
     ports:
