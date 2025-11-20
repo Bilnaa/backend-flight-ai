@@ -53,7 +53,7 @@ services:
     shm_size: "2gb"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/flightdb
-      RAY_ADDRESS: ray://ray:10001
+      RAY_ADDRESS: ray://localhost:10001
       PORT: 8000
       HOST: 0.0.0.0
       ENV: production
