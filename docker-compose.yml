@@ -32,7 +32,7 @@ services:
       - "10001:10001"  # Ray Client API (port de connexion principal)
     volumes:
       - ./models:/app/models
-    command: bash -c "ray start --head --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265 --object-store-memory=1000000000 --include-dashboard=true && sleep 3 && ray status && tail -f /dev/null"
+    command: bash -c "ray start --head --port=6379 --ray-client-server-port=10001 --dashboard-host=0.0.0.0 --dashboard-port=8265 --object-store-memory=1000000000 --include-dashboard=true && sleep 3 && ray status && tail -f /dev/null"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8265 || exit 1"]
       interval: 10s
@@ -50,7 +50,7 @@ services:
         condition: service_healthy
       ray:
         condition: service_healthy
-    shm_size: "1gb"
+    shm_size: "2gb"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/flightdb
       RAY_ADDRESS: ray://ray:10001

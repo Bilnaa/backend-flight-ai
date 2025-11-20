@@ -41,12 +41,19 @@ if not ray.is_initialized():
         except Exception as e:
             print(f"Échec de la connexion au cluster Ray: {e}")
             # Si la connexion échoue, bascule en mode local
-            if not ray.is_initialized():
-                print("Bascule en mode Ray local")
-                # S'assurer qu'on n'essaie pas de se reconnecter au cluster via la variable d'environnement
-                if "RAY_ADDRESS" in os.environ:
-                    del os.environ["RAY_ADDRESS"]
+            print("Bascule en mode Ray local")
+            # Nettoyer l'état potentiellement corrompu avant de réessayer en local
+            ray.shutdown()
+            # S'assurer qu'on n'essaie pas de se reconnecter au cluster via la variable d'environnement
+            if "RAY_ADDRESS" in os.environ:
+                del os.environ["RAY_ADDRESS"]
+            try:
                 ray.init(ignore_reinit_error=True)
+            except Exception as local_e:
+                print(f"Erreur fatale lors du démarrage de Ray local: {local_e}")
+                # Dernier recours : essayer sans arguments
+                ray.shutdown()
+                ray.init()
     else:
         # Mode local si RAY_ADDRESS n'est pas défini ou est "auto"
         if not ray.is_initialized():
