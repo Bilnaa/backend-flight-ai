@@ -23,7 +23,7 @@ services:
       context: .
       dockerfile: Dockerfile.ray
     container_name: flightray
-    shm_size: "1gb"
+    shm_size: "2gb"
     environment:
       MODEL_PATH: models/modele.pkl
     ports:
@@ -50,7 +50,6 @@ services:
         condition: service_healthy
       ray:
         condition: service_healthy
-    shm_size: "2gb"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/flightdb
       RAY_ADDRESS: ray://localhost:10001
